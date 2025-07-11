@@ -1,5 +1,5 @@
-idf_component_register(SRC_DIRS          "."
-                       INCLUDE_DIRS      "."
+idf_component_register(SRC_DIRS          "." "./http_server"
+                       INCLUDE_DIRS      "." "./http_server"
                        PRIV_INCLUDE_DIRS  "../../common/utils"
                        LDFRAGMENTS "linker.lf")
 

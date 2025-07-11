@@ -15,6 +15,7 @@
 #include <esp_matter_controller_client.h>
 #include <esp_matter_controller_console.h>
 #include <esp_matter_controller_utils.h>
+#include <esp_matter_controller_http_server.h>
 #include <esp_matter_ota.h>
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include <esp_openthread_border_router.h>
@@ -48,13 +49,18 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
             static bool sThreadBRInitialized = false;
             if (!sThreadBRInitialized) {
+                sThreadBRInitialized = true;
                 esp_openthread_set_backbone_netif(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
                 esp_openthread_lock_acquire(portMAX_DELAY);
                 esp_openthread_border_router_init();
                 esp_openthread_lock_release();
-                sThreadBRInitialized = true;
             }
 #endif
+            static bool sHttpServerStarted = false;
+            if (!sHttpServerStarted) {
+                sHttpServerStarted = true;
+                esp_matter::controller::http_server::initialize_http_server_with_controller();
+            }
         }
         break;
     default:
