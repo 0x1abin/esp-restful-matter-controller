@@ -115,18 +115,18 @@ curl -X POST http://192.168.1.100:8080/api/pairing \
   -H "Content-Type: application/json" \
   -d '{
     "method": "onnetwork",
-    "node_id": "12345",
-    "pincode": "20202021"
+    "node_id": 12345,
+    "pincode": 20202021
   }'
 
 # 控制设备开关
 curl -X POST http://192.168.1.100:8080/api/invoke-command \
   -H "Content-Type: application/json" \
   -d '{
-    "node_id": "12345",
-    "endpoint_id": "1",
-    "cluster_id": "6",
-    "command_id": "1",
+    "node_id": 12345,
+    "endpoint_id": 1,
+    "cluster_id": 6,
+    "command_id": 1,
     "command_data": "{}"
   }'
 
@@ -134,7 +134,7 @@ curl -X POST http://192.168.1.100:8080/api/invoke-command \
 curl -X POST http://192.168.1.100:8080/api/read-attribute \
   -H "Content-Type: application/json" \
   -d '{
-    "node_id": "12345",
+    "node_id": 12345,
     "endpoint_ids": "1",
     "cluster_ids": "6",
     "attribute_ids": "0"
@@ -150,14 +150,53 @@ from test_api import MatterControllerAPI
 api = MatterControllerAPI("192.168.1.100", 8080)
 
 # 配对设备
-response = api.pair_device_onnetwork("12345", "20202021")
+response = api.pair_device_onnetwork(12345, 20202021)
 
 # 控制设备
-response = api.invoke_command("12345", "1", "6", "1")  # 开灯
+response = api.invoke_command(12345, 1, 6, 1)  # 开灯
 
 # 读取状态
-response = api.read_attribute("12345", "1", "6", "0")
+response = api.read_attribute(12345, "1", "6", "0")
 ```
+
+## 参数类型说明
+
+### 🔢 数字类型参数
+
+以下参数使用数字类型（number）而非字符串：
+
+- `node_id`: 设备节点ID，64位整数
+- `endpoint_id`: 端点ID，16位整数
+- `cluster_id`: 集群ID，32位整数  
+- `command_id`: 命令ID，32位整数
+- `attribute_id`: 属性ID，32位整数
+- `pincode`: PIN码，32位整数
+- `discriminator`: 区分器，16位整数
+- `group_id`: 组ID，16位整数
+- `subscription_id`: 订阅ID，32位整数
+- `min_interval`: 最小间隔，16位整数
+- `max_interval`: 最大间隔，16位整数
+- `window_timeout`: 窗口超时，16位整数
+- `iteration`: 迭代次数，32位整数
+- `option`: 选项，8位整数
+- `index`: 索引，整数
+
+### 📝 字符串类型参数
+
+以下参数保持字符串类型：
+
+- `endpoint_ids`: 端点ID列表（逗号分隔）
+- `cluster_ids`: 集群ID列表（逗号分隔）
+- `attribute_ids`: 属性ID列表（逗号分隔）
+- `event_ids`: 事件ID列表（逗号分隔）
+- `command_data`: 命令数据（JSON字符串）
+- `attribute_value`: 属性值（JSON字符串）
+- `payload`: 配对载荷字符串
+- `ssid`: WiFi网络名称
+- `password`: WiFi密码
+- `dataset`: Thread数据集（hex字符串）
+- `group_name`: 组名称
+- `action`: 操作类型
 
 ## 技术特点
 

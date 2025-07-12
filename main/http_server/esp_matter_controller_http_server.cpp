@@ -413,15 +413,14 @@ esp_err_t pairing_handler(httpd_req_t *req) {
         cJSON *node_id = cJSON_GetObjectItem(json, "node_id");
         cJSON *pincode = cJSON_GetObjectItem(json, "pincode");
         
-        if (!node_id || !pincode || !cJSON_IsString(node_id) || !cJSON_IsString(pincode) ||
-            !node_id->valuestring || !pincode->valuestring) {
+        if (!node_id || !pincode || !cJSON_IsNumber(node_id) || !cJSON_IsNumber(pincode)) {
             cJSON_Delete(json);
             cJSON_Delete(response);
             return send_error_response(req, 400, "Missing or invalid node_id or pincode for onnetwork pairing");
         }
         
-        uint64_t nodeId = string_to_uint64(node_id->valuestring);
-        uint32_t pin = string_to_uint32(pincode->valuestring);
+        uint64_t nodeId = (uint64_t)node_id->valuedouble;
+        uint32_t pin = (uint32_t)pincode->valueint;
         
         // Lock Matter stack with timeout
         if (!acquire_matter_lock()) {
@@ -442,18 +441,17 @@ esp_err_t pairing_handler(httpd_req_t *req) {
         cJSON *discriminator = cJSON_GetObjectItem(json, "discriminator");
         
         if (!node_id || !ssid || !password || !pincode || !discriminator ||
-            !cJSON_IsString(node_id) || !cJSON_IsString(ssid) || !cJSON_IsString(password) ||
-            !cJSON_IsString(pincode) || !cJSON_IsString(discriminator) ||
-            !node_id->valuestring || !ssid->valuestring || !password->valuestring ||
-            !pincode->valuestring || !discriminator->valuestring) {
+            !cJSON_IsNumber(node_id) || !cJSON_IsString(ssid) || !cJSON_IsString(password) ||
+            !cJSON_IsNumber(pincode) || !cJSON_IsNumber(discriminator) ||
+            !ssid->valuestring || !password->valuestring) {
             cJSON_Delete(json);
             cJSON_Delete(response);
             return send_error_response(req, 400, "Missing or invalid parameters for ble-wifi pairing");
         }
         
-        uint64_t nodeId = string_to_uint64(node_id->valuestring);
-        uint32_t pin = string_to_uint32(pincode->valuestring);
-        uint16_t disc = string_to_uint16(discriminator->valuestring);
+        uint64_t nodeId = (uint64_t)node_id->valuedouble;
+        uint32_t pin = (uint32_t)pincode->valueint;
+        uint16_t disc = (uint16_t)discriminator->valueint;
         
         if (!acquire_matter_lock()) {
             cJSON_Delete(json);
@@ -470,8 +468,8 @@ esp_err_t pairing_handler(httpd_req_t *req) {
         cJSON *discriminator = cJSON_GetObjectItem(json, "discriminator");
         
         if (!node_id || !dataset || !pincode || !discriminator ||
-            !cJSON_IsString(node_id) || !cJSON_IsString(dataset) || 
-            !cJSON_IsString(pincode) || !cJSON_IsString(discriminator)) {
+            !cJSON_IsNumber(node_id) || !cJSON_IsString(dataset) || 
+            !cJSON_IsNumber(pincode) || !cJSON_IsNumber(discriminator)) {
             cJSON_Delete(json);
             cJSON_Delete(response);
             return send_error_response(req, 400, "Missing or invalid parameters for ble-thread pairing");
@@ -492,9 +490,9 @@ esp_err_t pairing_handler(httpd_req_t *req) {
             return send_error_response(req, 400, "Invalid dataset format - must be hex string");
         }
         
-        uint64_t nodeId = string_to_uint64(node_id->valuestring);
-        uint32_t pin = string_to_uint32(pincode->valuestring);
-        uint16_t disc = string_to_uint16(discriminator->valuestring);
+        uint64_t nodeId = (uint64_t)node_id->valuedouble;
+        uint32_t pin = (uint32_t)pincode->valueint;
+        uint16_t disc = (uint16_t)discriminator->valueint;
         
         // Lock the Matter stack before calling pairing function
         esp_matter::lock::status_t lock_status = esp_matter::lock::chip_stack_lock(portMAX_DELAY);
@@ -516,14 +514,14 @@ esp_err_t pairing_handler(httpd_req_t *req) {
         cJSON *node_id = cJSON_GetObjectItem(json, "node_id");
         cJSON *payload = cJSON_GetObjectItem(json, "payload");
         
-        if (!node_id || !payload || !cJSON_IsString(node_id) || !cJSON_IsString(payload) ||
-            !node_id->valuestring || !payload->valuestring) {
+        if (!node_id || !payload || !cJSON_IsNumber(node_id) || !cJSON_IsString(payload) ||
+            !payload->valuestring) {
             cJSON_Delete(json);
             cJSON_Delete(response);
             return send_error_response(req, 400, "Missing or invalid node_id or payload for code pairing");
         }
         
-        uint64_t nodeId = string_to_uint64(node_id->valuestring);
+        uint64_t nodeId = (uint64_t)node_id->valuedouble;
         
         if (!acquire_matter_lock()) {
             cJSON_Delete(json);
@@ -569,20 +567,18 @@ esp_err_t open_commissioning_window_handler(httpd_req_t *req) {
     cJSON *discriminator = cJSON_GetObjectItem(json, "discriminator");
     
     if (!node_id || !option || !window_timeout || !iteration || !discriminator ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(option) || !cJSON_IsString(window_timeout) ||
-        !cJSON_IsString(iteration) || !cJSON_IsString(discriminator) ||
-        !node_id->valuestring || !option->valuestring || !window_timeout->valuestring ||
-        !iteration->valuestring || !discriminator->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsNumber(option) || !cJSON_IsNumber(window_timeout) ||
+        !cJSON_IsNumber(iteration) || !cJSON_IsNumber(discriminator)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
-    uint8_t opt = string_to_uint8(option->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
+    uint8_t opt = (uint8_t)option->valueint;
     bool is_enhanced = opt == 1;
-    uint16_t timeout = string_to_uint16(window_timeout->valuestring);
-    uint32_t iter = string_to_uint32(iteration->valuestring);
-    uint16_t disc = string_to_uint16(discriminator->valuestring);
+    uint16_t timeout = (uint16_t)window_timeout->valueint;
+    uint32_t iter = (uint32_t)iteration->valueint;
+    uint16_t disc = (uint16_t)discriminator->valueint;
     
     // Lock the Matter stack before calling commissioning window command
     esp_matter::lock::status_t lock_status = esp_matter::lock::chip_stack_lock(portMAX_DELAY);
@@ -627,18 +623,16 @@ esp_err_t invoke_command_handler(httpd_req_t *req) {
     cJSON *timed_invoke_timeout = cJSON_GetObjectItem(json, "timed_invoke_timeout_ms");
     
     if (!node_id || !endpoint_id || !cluster_id || !command_id ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_id) ||
-        !cJSON_IsString(cluster_id) || !cJSON_IsString(command_id) ||
-        !node_id->valuestring || !endpoint_id->valuestring ||
-        !cluster_id->valuestring || !command_id->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsNumber(endpoint_id) ||
+        !cJSON_IsNumber(cluster_id) || !cJSON_IsNumber(command_id)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
-    uint16_t epId = string_to_uint16(endpoint_id->valuestring);
-    uint32_t clusterId = string_to_uint32(cluster_id->valuestring);
-    uint32_t cmdId = string_to_uint32(command_id->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
+    uint16_t epId = (uint16_t)endpoint_id->valueint;
+    uint32_t clusterId = (uint32_t)cluster_id->valueint;
+    uint32_t cmdId = (uint32_t)command_id->valueint;
     
     char *cmd_data_str = NULL;
     if (command_data && cJSON_IsString(command_data)) {
@@ -689,15 +683,14 @@ esp_err_t read_attribute_handler(httpd_req_t *req) {
     cJSON *attribute_ids = cJSON_GetObjectItem(json, "attribute_ids");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_ids) ||
+        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
         !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
-        !node_id->valuestring || !endpoint_ids->valuestring ||
-        !cluster_ids->valuestring || !attribute_ids->valuestring) {
+        !endpoint_ids->valuestring || !cluster_ids->valuestring || !attribute_ids->valuestring) {
         cJSON_Delete(json);
         return safe_send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
     
     ScopedMemoryBufferWithSize<uint16_t> ep_ids;
     ScopedMemoryBufferWithSize<uint32_t> cl_ids;
@@ -776,17 +769,16 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
     cJSON *timed_write_timeout = cJSON_GetObjectItem(json, "timed_write_timeout_ms");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids || !attribute_value ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_ids) ||
+        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
         !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
         !cJSON_IsString(attribute_value) ||
-        !node_id->valuestring || !endpoint_ids->valuestring ||
-        !cluster_ids->valuestring || !attribute_ids->valuestring ||
-        !attribute_value->valuestring) {
+        !endpoint_ids->valuestring || !cluster_ids->valuestring || 
+        !attribute_ids->valuestring || !attribute_value->valuestring) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
     
     ScopedMemoryBufferWithSize<uint16_t> ep_ids;
     ScopedMemoryBufferWithSize<uint32_t> cl_ids;
@@ -858,15 +850,14 @@ esp_err_t read_event_handler(httpd_req_t *req) {
     cJSON *event_ids = cJSON_GetObjectItem(json, "event_ids");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !event_ids ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_ids) ||
+        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
         !cJSON_IsString(cluster_ids) || !cJSON_IsString(event_ids) ||
-        !node_id->valuestring || !endpoint_ids->valuestring ||
-        !cluster_ids->valuestring || !event_ids->valuestring) {
+        !endpoint_ids->valuestring || !cluster_ids->valuestring || !event_ids->valuestring) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
     
     ScopedMemoryBufferWithSize<uint16_t> ep_ids;
     ScopedMemoryBufferWithSize<uint32_t> cl_ids;
@@ -937,19 +928,17 @@ esp_err_t subscribe_attribute_handler(httpd_req_t *req) {
     cJSON *max_interval = cJSON_GetObjectItem(json, "max_interval");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids || !min_interval || !max_interval ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_ids) ||
+        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
         !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
-        !cJSON_IsString(min_interval) || !cJSON_IsString(max_interval) ||
-        !node_id->valuestring || !endpoint_ids->valuestring ||
-        !cluster_ids->valuestring || !attribute_ids->valuestring ||
-        !min_interval->valuestring || !max_interval->valuestring) {
+        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval) ||
+        !endpoint_ids->valuestring || !cluster_ids->valuestring || !attribute_ids->valuestring) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
-    uint16_t minInterval = string_to_uint16(min_interval->valuestring);
-    uint16_t maxInterval = string_to_uint16(max_interval->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
+    uint16_t minInterval = (uint16_t)min_interval->valueint;
+    uint16_t maxInterval = (uint16_t)max_interval->valueint;
     
     ScopedMemoryBufferWithSize<uint16_t> ep_ids;
     ScopedMemoryBufferWithSize<uint32_t> cl_ids;
@@ -1019,19 +1008,17 @@ esp_err_t subscribe_event_handler(httpd_req_t *req) {
     cJSON *max_interval = cJSON_GetObjectItem(json, "max_interval");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !event_ids || !min_interval || !max_interval ||
-        !cJSON_IsString(node_id) || !cJSON_IsString(endpoint_ids) ||
+        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
         !cJSON_IsString(cluster_ids) || !cJSON_IsString(event_ids) ||
-        !cJSON_IsString(min_interval) || !cJSON_IsString(max_interval) ||
-        !node_id->valuestring || !endpoint_ids->valuestring ||
-        !cluster_ids->valuestring || !event_ids->valuestring ||
-        !min_interval->valuestring || !max_interval->valuestring) {
+        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval) ||
+        !endpoint_ids->valuestring || !cluster_ids->valuestring || !event_ids->valuestring) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
-    uint16_t minInterval = string_to_uint16(min_interval->valuestring);
-    uint16_t maxInterval = string_to_uint16(max_interval->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
+    uint16_t minInterval = (uint16_t)min_interval->valueint;
+    uint16_t maxInterval = (uint16_t)max_interval->valueint;
     
     ScopedMemoryBufferWithSize<uint16_t> ep_ids;
     ScopedMemoryBufferWithSize<uint32_t> cl_ids;
@@ -1096,14 +1083,13 @@ esp_err_t shutdown_subscription_handler(httpd_req_t *req) {
     cJSON *node_id = cJSON_GetObjectItem(json, "node_id");
     cJSON *subscription_id = cJSON_GetObjectItem(json, "subscription_id");
     
-    if (!node_id || !subscription_id || !cJSON_IsString(node_id) || !cJSON_IsString(subscription_id) ||
-        !node_id->valuestring || !subscription_id->valuestring) {
+    if (!node_id || !subscription_id || !cJSON_IsNumber(node_id) || !cJSON_IsNumber(subscription_id)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid node_id or subscription_id");
     }
     
-    uint64_t nodeId = string_to_uint64(node_id->valuestring);
-    uint32_t subId = string_to_uint32(subscription_id->valuestring);
+    uint64_t nodeId = (uint64_t)node_id->valuedouble;
+    uint32_t subId = (uint32_t)subscription_id->valueint;
     
     // Lock the Matter stack before calling shutdown subscription command
     esp_matter::lock::status_t lock_status = esp_matter::lock::chip_stack_lock(portMAX_DELAY);
@@ -1151,12 +1137,12 @@ esp_err_t shutdown_all_subscriptions_handler(httpd_req_t *req) {
     
     if (node_id) {
         // Shutdown subscriptions for specific node
-        if (!cJSON_IsString(node_id) || !node_id->valuestring) {
+        if (!cJSON_IsNumber(node_id)) {
             esp_matter::lock::chip_stack_unlock();
             cJSON_Delete(json);
             return send_error_response(req, 400, "Invalid node_id parameter");
         }
-        uint64_t nodeId = string_to_uint64(node_id->valuestring);
+        uint64_t nodeId = (uint64_t)node_id->valuedouble;
         controller::send_shutdown_subscriptions(nodeId);
     } else {
         // Shutdown all subscriptions
@@ -1273,26 +1259,26 @@ esp_err_t group_settings_handler(httpd_req_t *req) {
         cJSON *group_id = cJSON_GetObjectItem(json, "group_id");
         cJSON *group_name = cJSON_GetObjectItem(json, "group_name");
         
-        if (!group_id || !group_name) {
+        if (!group_id || !group_name || !cJSON_IsNumber(group_id) || !cJSON_IsString(group_name)) {
             esp_matter::lock::chip_stack_unlock();
             cJSON_Delete(json);
             cJSON_Delete(response);
-            return send_error_response(req, 400, "Missing group_id or group_name");
+            return send_error_response(req, 400, "Missing or invalid group_id or group_name");
         }
         
-        uint16_t groupId = string_to_uint16(group_id->valuestring);
+        uint16_t groupId = (uint16_t)group_id->valueint;
         result = controller::group_settings::add_group(group_name->valuestring, groupId);
     } else if (strcmp(action->valuestring, "remove-group") == 0) {
         cJSON *group_id = cJSON_GetObjectItem(json, "group_id");
         
-        if (!group_id) {
+        if (!group_id || !cJSON_IsNumber(group_id)) {
             esp_matter::lock::chip_stack_unlock();
             cJSON_Delete(json);
             cJSON_Delete(response);
-            return send_error_response(req, 400, "Missing group_id");
+            return send_error_response(req, 400, "Missing or invalid group_id");
         }
         
-        uint16_t groupId = string_to_uint16(group_id->valuestring);
+        uint16_t groupId = (uint16_t)group_id->valueint;
         result = controller::group_settings::remove_group(groupId);
     } else {
         esp_matter::lock::chip_stack_unlock();
@@ -1360,15 +1346,15 @@ esp_err_t udc_handler(httpd_req_t *req) {
         cJSON *pincode = cJSON_GetObjectItem(json, "pincode");
         cJSON *index = cJSON_GetObjectItem(json, "index");
         
-        if (!pincode || !index) {
+        if (!pincode || !index || !cJSON_IsNumber(pincode) || !cJSON_IsNumber(index)) {
             esp_matter::lock::chip_stack_unlock();
             cJSON_Delete(json);
             cJSON_Delete(response);
-            return send_error_response(req, 400, "Missing pincode or index");
+            return send_error_response(req, 400, "Missing or invalid pincode or index");
         }
         
-        uint32_t pin = string_to_uint32(pincode->valuestring);
-        size_t idx = (size_t)string_to_uint32(index->valuestring);
+        uint32_t pin = (uint32_t)pincode->valueint;
+        size_t idx = (size_t)index->valueint;
         
         controller::matter_controller_client &instance = controller::matter_controller_client::get_instance();
         UDCClientState *state = instance.get_commissioner()->GetUserDirectedCommissioningServer()->GetUDCClients().GetUDCClientState(idx);
