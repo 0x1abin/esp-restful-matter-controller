@@ -113,6 +113,59 @@ static size_t get_array_size(const char *str)
     return ret;
 }
 
+static esp_err_t json_array_to_uint32_array(cJSON *json_array, ScopedMemoryBufferWithSize<uint32_t> &uint32_array)
+{
+    if (!cJSON_IsArray(json_array)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    size_t array_len = cJSON_GetArraySize(json_array);
+    if (array_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint32_array.Calloc(array_len);
+    if (!uint32_array.Get()) {
+        return ESP_ERR_NO_MEM;
+    }
+    
+    for (size_t i = 0; i < array_len; ++i) {
+        cJSON *item = cJSON_GetArrayItem(json_array, i);
+        if (!cJSON_IsNumber(item)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        uint32_array[i] = (uint32_t)item->valueint;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t json_array_to_uint16_array(cJSON *json_array, ScopedMemoryBufferWithSize<uint16_t> &uint16_array)
+{
+    if (!cJSON_IsArray(json_array)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    size_t array_len = cJSON_GetArraySize(json_array);
+    if (array_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_array.Calloc(array_len);
+    if (!uint16_array.Get()) {
+        return ESP_ERR_NO_MEM;
+    }
+    
+    for (size_t i = 0; i < array_len; ++i) {
+        cJSON *item = cJSON_GetArrayItem(json_array, i);
+        if (!cJSON_IsNumber(item)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        uint16_array[i] = (uint16_t)item->valueint;
+    }
+    return ESP_OK;
+}
+
+// Keep legacy string parsing functions for backward compatibility if needed
 static esp_err_t string_to_uint32_array(const char *str, ScopedMemoryBufferWithSize<uint32_t> &uint32_array)
 {
     size_t array_len = get_array_size(str);
@@ -683,9 +736,8 @@ esp_err_t read_attribute_handler(httpd_req_t *req) {
     cJSON *attribute_ids = cJSON_GetObjectItem(json, "attribute_ids");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids ||
-        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
-        !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
-        !endpoint_ids->valuestring || !cluster_ids->valuestring || !attribute_ids->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsArray(endpoint_ids) ||
+        !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(attribute_ids)) {
         cJSON_Delete(json);
         return safe_send_error_response(req, 400, "Missing or invalid required parameters");
     }
@@ -699,19 +751,19 @@ esp_err_t read_attribute_handler(httpd_req_t *req) {
     esp_err_t result = ESP_FAIL;
     
     // Pre-validate and allocate all arrays before acquiring lock
-    if (string_to_uint16_array(endpoint_ids->valuestring, ep_ids) != ESP_OK) {
+    if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return safe_send_error_response(req, 400, "Invalid endpoint_ids format");
+        return safe_send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(cluster_ids->valuestring, cl_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return safe_send_error_response(req, 400, "Invalid cluster_ids format");
+        return safe_send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(attribute_ids->valuestring, attr_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(attribute_ids, attr_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return safe_send_error_response(req, 400, "Invalid attribute_ids format");
+        return safe_send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
     }
     
     // Minimize time spent in lock by preparing everything beforehand
@@ -769,11 +821,9 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
     cJSON *timed_write_timeout = cJSON_GetObjectItem(json, "timed_write_timeout_ms");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids || !attribute_value ||
-        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
-        !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
-        !cJSON_IsString(attribute_value) ||
-        !endpoint_ids->valuestring || !cluster_ids->valuestring || 
-        !attribute_ids->valuestring || !attribute_value->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsArray(endpoint_ids) ||
+        !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(attribute_ids) ||
+        !cJSON_IsString(attribute_value) || !attribute_value->valuestring) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
@@ -787,19 +837,19 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
     esp_err_t result = ESP_FAIL;
     
     // Pre-validate and allocate all arrays before acquiring lock
-    if (string_to_uint16_array(endpoint_ids->valuestring, ep_ids) != ESP_OK) {
+    if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid endpoint_ids format");
+        return send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(cluster_ids->valuestring, cl_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid cluster_ids format");
+        return send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(attribute_ids->valuestring, attr_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(attribute_ids, attr_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid attribute_ids format");
+        return send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
     }
     
     // Lock Matter stack with timeout
@@ -850,9 +900,8 @@ esp_err_t read_event_handler(httpd_req_t *req) {
     cJSON *event_ids = cJSON_GetObjectItem(json, "event_ids");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !event_ids ||
-        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
-        !cJSON_IsString(cluster_ids) || !cJSON_IsString(event_ids) ||
-        !endpoint_ids->valuestring || !cluster_ids->valuestring || !event_ids->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsArray(endpoint_ids) ||
+        !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(event_ids)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
@@ -866,19 +915,19 @@ esp_err_t read_event_handler(httpd_req_t *req) {
     esp_err_t result = ESP_FAIL;
     
     // Pre-validate and allocate all arrays before acquiring lock
-    if (string_to_uint16_array(endpoint_ids->valuestring, ep_ids) != ESP_OK) {
+    if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid endpoint_ids format");
+        return send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(cluster_ids->valuestring, cl_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid cluster_ids format");
+        return send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(event_ids->valuestring, ev_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(event_ids, ev_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid event_ids format");
+        return send_error_response(req, 400, "Invalid event_ids format - must be array of numbers");
     }
     
     // Lock the Matter stack before calling read event command
@@ -928,10 +977,9 @@ esp_err_t subscribe_attribute_handler(httpd_req_t *req) {
     cJSON *max_interval = cJSON_GetObjectItem(json, "max_interval");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !attribute_ids || !min_interval || !max_interval ||
-        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
-        !cJSON_IsString(cluster_ids) || !cJSON_IsString(attribute_ids) ||
-        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval) ||
-        !endpoint_ids->valuestring || !cluster_ids->valuestring || !attribute_ids->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsArray(endpoint_ids) ||
+        !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(attribute_ids) ||
+        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
@@ -947,19 +995,19 @@ esp_err_t subscribe_attribute_handler(httpd_req_t *req) {
     esp_err_t result = ESP_FAIL;
     
     // Pre-validate and allocate all arrays before acquiring lock
-    if (string_to_uint16_array(endpoint_ids->valuestring, ep_ids) != ESP_OK) {
+    if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid endpoint_ids format");
+        return send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(cluster_ids->valuestring, cl_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid cluster_ids format");
+        return send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(attribute_ids->valuestring, attr_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(attribute_ids, attr_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid attribute_ids format");
+        return send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
     }
     
     // Lock the Matter stack before calling subscribe attribute command
@@ -1008,10 +1056,9 @@ esp_err_t subscribe_event_handler(httpd_req_t *req) {
     cJSON *max_interval = cJSON_GetObjectItem(json, "max_interval");
     
     if (!node_id || !endpoint_ids || !cluster_ids || !event_ids || !min_interval || !max_interval ||
-        !cJSON_IsNumber(node_id) || !cJSON_IsString(endpoint_ids) ||
-        !cJSON_IsString(cluster_ids) || !cJSON_IsString(event_ids) ||
-        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval) ||
-        !endpoint_ids->valuestring || !cluster_ids->valuestring || !event_ids->valuestring) {
+        !cJSON_IsNumber(node_id) || !cJSON_IsArray(endpoint_ids) ||
+        !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(event_ids) ||
+        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval)) {
         cJSON_Delete(json);
         return send_error_response(req, 400, "Missing or invalid required parameters");
     }
@@ -1027,19 +1074,19 @@ esp_err_t subscribe_event_handler(httpd_req_t *req) {
     esp_err_t result = ESP_FAIL;
     
     // Pre-validate and allocate all arrays before acquiring lock
-    if (string_to_uint16_array(endpoint_ids->valuestring, ep_ids) != ESP_OK) {
+    if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid endpoint_ids format");
+        return send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(cluster_ids->valuestring, cl_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid cluster_ids format");
+        return send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
-    if (string_to_uint32_array(event_ids->valuestring, ev_ids) != ESP_OK) {
+    if (json_array_to_uint32_array(event_ids, ev_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid event_ids format");
+        return send_error_response(req, 400, "Invalid event_ids format - must be array of numbers");
     }
     
     // Lock the Matter stack before calling subscribe event command

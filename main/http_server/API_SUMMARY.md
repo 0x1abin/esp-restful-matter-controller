@@ -135,9 +135,9 @@ curl -X POST http://192.168.1.100:8080/api/read-attribute \
   -H "Content-Type: application/json" \
   -d '{
     "node_id": 12345,
-    "endpoint_ids": "1",
-    "cluster_ids": "6",
-    "attribute_ids": "0"
+    "endpoint_ids": [1],
+    "cluster_ids": [6],
+    "attribute_ids": [0]
   }'
 ```
 
@@ -156,7 +156,7 @@ response = api.pair_device_onnetwork(12345, 20202021)
 response = api.invoke_command(12345, 1, 6, 1)  # 开灯
 
 # 读取状态
-response = api.read_attribute(12345, "1", "6", "0")
+response = api.read_attribute(12345, [1], [6], [0])
 ```
 
 ## 参数类型说明
@@ -181,14 +181,19 @@ response = api.read_attribute(12345, "1", "6", "0")
 - `option`: 选项，8位整数
 - `index`: 索引，整数
 
+### 🔢 数组类型参数
+
+以下参数使用数字数组类型：
+
+- `endpoint_ids`: 端点ID数组，如 `[1, 2, 3]`
+- `cluster_ids`: 集群ID数组，如 `[6, 8]`
+- `attribute_ids`: 属性ID数组，如 `[0, 1]`
+- `event_ids`: 事件ID数组，如 `[0, 1]`
+
 ### 📝 字符串类型参数
 
 以下参数保持字符串类型：
 
-- `endpoint_ids`: 端点ID列表（逗号分隔）
-- `cluster_ids`: 集群ID列表（逗号分隔）
-- `attribute_ids`: 属性ID列表（逗号分隔）
-- `event_ids`: 事件ID列表（逗号分隔）
 - `command_data`: 命令数据（JSON字符串）
 - `attribute_value`: 属性值（JSON字符串）
 - `payload`: 配对载荷字符串
