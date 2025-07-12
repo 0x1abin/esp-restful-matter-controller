@@ -50,7 +50,7 @@
 | `/api/open-commissioning-window` | POST | 打开配对窗口 | `controller open-commissioning-window` |
 | `/api/invoke-command` | POST | 发送集群命令 | `controller invoke-cmd` |
 | `/api/read-attribute` | POST | 读取属性 | `controller read-attr` |
-| `/api/write-attribute` | POST | 写入属性 | `controller write-attr` |
+| `/api/write-attribute` | POST | 写入属性值 | `controller write-attr` |
 | `/api/read-event` | POST | 读取事件 | `controller read-event` |
 | `/api/subscribe-attribute` | POST | 订阅属性 | `controller subs-attr` |
 | `/api/subscribe-event` | POST | 订阅事件 | `controller subs-event` |
@@ -139,6 +139,17 @@ curl -X POST http://192.168.1.100:8080/api/read-attribute \
     "cluster_ids": [6],
     "attribute_ids": [0]
   }'
+
+# 写入设备属性
+curl -X POST http://192.168.1.100:8080/api/write-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1],
+    "cluster_ids": [8],
+    "attribute_ids": [0],
+    "attribute_value": "{\"value\": 128, \"type\": \"uint8\"}"
+  }'
 ```
 
 ### 4. Python客户端使用
@@ -157,6 +168,9 @@ response = api.invoke_command(12345, 1, 6, 1)  # 开灯
 
 # 读取状态
 response = api.read_attribute(12345, [1], [6], [0])
+
+# 写入属性
+response = api.write_attribute(12345, [1], [8], [0], "{\"value\": 128, \"type\": \"uint8\"}")
 ```
 
 ## 参数类型说明
@@ -195,7 +209,194 @@ response = api.read_attribute(12345, [1], [6], [0])
 以下参数保持字符串类型：
 
 - `command_data`: 命令数据（JSON字符串）
-- `attribute_value`: 属性值（JSON字符串）
+- `attribute_value`: 属性值（JSON字符串，格式：`{"value": 数值, "type": "数据类型"}`）
+- `timed_write_timeout_ms`: 定时写入超时时间（毫秒，可选）
+
+## 📋 API 响应格式更新
+
+### /api/read-attribute 响应格式
+
+读取属性API现在返回实际的属性值，而不仅仅是命令发送状态。
+
+**成功响应示例：**
+```json
+{
+  "status": "success",
+  "message": "Read attribute completed successfully",
+  "attributes": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 6,
+      "attribute_id": 0,
+      "value": true,
+      "type": "boolean"
+    }
+  ]
+}
+```
+
+**支持的数据类型：**
+- `boolean`: 布尔值
+- `uint`: 无符号整数
+- `int`: 有符号整数
+- `float`: 浮点数
+- `string`: 字符串
+- `null`: 空值
+- `raw`: 原始数据（未解析）
+
+**错误响应示例：**
+```json
+{
+  "status": "error",
+  "message": "Failed to send read attribute command"
+}
+```
+
+**超时响应示例：**
+```json
+{
+  "status": "timeout", 
+  "message": "Timeout waiting for attribute data"
+}
+```
+
+### 使用示例
+
+```bash
+# 读取设备开关状态
+curl -X POST http://192.168.1.100:8080/api/read-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1],
+    "cluster_ids": [6],
+    "attribute_ids": [0]
+  }'
+
+# 响应
+{
+  "status": "success",
+  "message": "Read attribute completed successfully",
+  "attributes": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 6,
+      "attribute_id": 0,
+      "value": true,
+      "type": "boolean"
+    }
+  ]
+}
+```
+
+### 多属性读取
+
+```bash
+# 读取多个属性
+curl -X POST http://192.168.1.100:8080/api/read-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1, 1],
+    "cluster_ids": [6, 8],
+    "attribute_ids": [0, 0]
+  }'
+
+# 响应
+{
+  "status": "success",
+  "message": "Read attribute completed successfully", 
+  "attributes": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 6,
+      "attribute_id": 0,
+      "value": true,
+      "type": "boolean"
+    },
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 8,
+      "attribute_id": 0,
+      "value": 128,
+      "type": "uint"
+    }
+  ]
+}
+```
+
+### 写入属性使用示例
+
+```bash
+# 设置灯的亮度 (Level Control Cluster)
+curl -X POST http://192.168.1.100:8080/api/write-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1],
+    "cluster_ids": [8],
+    "attribute_ids": [0],
+    "attribute_value": "{\"value\": 128, \"type\": \"uint8\"}"
+  }'
+
+# 设置色温 (Color Control Cluster)
+curl -X POST http://192.168.1.100:8080/api/write-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1],
+    "cluster_ids": [768],
+    "attribute_ids": [7],
+    "attribute_value": "{\"value\": 250, \"type\": \"uint16\"}"
+  }'
+
+# 设置字符串属性 (例如设备名称)
+curl -X POST http://192.168.1.100:8080/api/write-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [0],
+    "cluster_ids": [40],
+    "attribute_ids": [5],
+    "attribute_value": "{\"value\": \"Living Room Light\", \"type\": \"string\"}"
+  }'
+
+# 使用定时写入 (带超时)
+curl -X POST http://192.168.1.100:8080/api/write-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 12345,
+    "endpoint_ids": [1],
+    "cluster_ids": [8],
+    "attribute_ids": [0],
+    "attribute_value": "{\"value\": 255, \"type\": \"uint8\"}",
+    "timed_write_timeout_ms": 5000
+  }'
+```
+
+**write-attribute 响应示例：**
+
+```json
+{
+  "status": "success",
+  "message": "Write attribute command sent successfully"
+}
+```
+
+**常用属性类型：**
+- `uint8`: 8位无符号整数 (0-255)
+- `uint16`: 16位无符号整数 (0-65535)
+- `uint32`: 32位无符号整数
+- `int8`: 8位有符号整数 (-128 to 127)
+- `int16`: 16位有符号整数
+- `int32`: 32位有符号整数
+- `bool`: 布尔值 (true/false)
+- `string`: 字符串值
+- `float`: 浮点数
 - `payload`: 配对载荷字符串
 - `ssid`: WiFi网络名称
 - `password`: WiFi密码
@@ -348,4 +549,109 @@ API支持自定义JSON响应格式，可以根据需要扩展响应字段或修�
 - ✅ **稳定性**: 完善的错误处理和资源管理
 - ✅ **文档齐全**: 详细的使用指南和示例
 
-这个实现为Matter生态系统提供了一个强大而灵活的Web接口，使得Matter设备的控制和管理变得更加便捷。 
+这个实现为Matter生态系统提供了一个强大而灵活的Web接口，使得Matter设备的控制和管理变得更加便捷。
+
+## 🆕 最新功能更新 - 属性值返回
+
+### ✨ read-attribute API 增强
+
+**重要改进**: `read-attribute` API 现在返回实际的属性值，而不仅仅是命令发送状态！
+
+**新功能特性:**
+- ✅ **实时属性值**: 返回设备的真实属性数据
+- ✅ **多种数据类型**: 支持 boolean、integer、string、float 等
+- ✅ **类型识别**: 自动识别并标注数据类型
+- ✅ **超时保护**: 10秒超时，避免无限等待
+- ✅ **多属性支持**: 一次请求读取多个属性
+
+**使用对比:**
+
+```bash
+# 之前的响应 (只有状态)
+{
+  "status": "success",
+  "message": "Read attribute command sent successfully"
+}
+
+# 现在的响应 (包含实际数据)
+{
+  "status": "success",
+  "message": "Read attribute completed successfully",
+  "attributes": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 6,
+      "attribute_id": 0,
+      "value": true,
+      "type": "boolean"
+    }
+  ]
+}
+```
+
+**实际应用示例:**
+
+```bash
+# 检查智能灯泡状态
+curl -X POST http://192.168.1.100:8080/api/read-attribute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": 11,
+    "endpoint_ids": [1],
+    "cluster_ids": [6],
+    "attribute_ids": [0]
+  }'
+
+# 响应示例
+{
+  "status": "success",
+  "message": "Read attribute completed successfully",
+  "attributes": [
+    {
+      "node_id": 11,
+      "endpoint_id": 1,
+      "cluster_id": 6,
+      "attribute_id": 0,
+      "value": true,
+      "type": "boolean"
+    }
+  ]
+}
+# 解读: 设备11的开关状态为ON (true)
+```
+
+**智能场景应用:**
+
+```python
+# Python示例: 智能家居状态监控
+from test_http_server import MatterControllerAPI
+
+api = MatterControllerAPI("192.168.1.100", 8080)
+
+# 读取客厅灯的状态和亮度
+result = api.read_attribute(
+    node_id=11,
+    endpoint_ids=[1, 1],
+    cluster_ids=[6, 8],      # OnOff + Level Control
+    attribute_ids=[0, 0]     # Current state + level
+)
+
+if result and result["status"] == "success":
+    for attr in result["attributes"]:
+        if attr["cluster_id"] == 6:  # OnOff
+            state = "开启" if attr["value"] else "关闭"
+            print(f"客厅灯状态: {state}")
+        elif attr["cluster_id"] == 8:  # Level
+            brightness = round((attr["value"] / 255) * 100, 1)
+            print(f"亮度: {brightness}%")
+```
+
+**技术实现亮点:**
+- 🔧 **回调机制**: 使用 Matter SDK 回调捕获真实数据
+- 🔧 **TLV解析**: 自动解析 Matter TLV 数据格式
+- 🔧 **线程安全**: 信号量同步，确保数据完整性
+- 🔧 **内存管理**: 自动清理，避免内存泄漏
+- 🔧 **错误处理**: 超时、解析失败等完善的错误处理
+
+这一改进使得HTTP API能够真正用于实时设备状态监控和智能家居自动化场景！ 
