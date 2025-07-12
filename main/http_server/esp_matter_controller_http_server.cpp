@@ -1,4 +1,3 @@
-
 /*
  *
  *    Copyright (c) 2022 Project CHIP Authors
@@ -31,6 +30,7 @@
 #include <esp_matter_controller_http_server.h>
 #include <esp_matter_core.h>
 #include <algorithm>
+#include <map>
 #if CONFIG_ENABLE_ESP32_CONTROLLER_BLE_SCAN
 #include <esp_matter_controller_ble_scan_command.h>
 #endif
@@ -48,11 +48,17 @@
 #include <protocols/secure_channel/RendezvousParameters.h>
 #include <protocols/user_directed_commissioning/UserDirectedCommissioning.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 using chip::NodeId;
 using chip::Inet::IPAddress;
 using chip::Platform::ScopedMemoryBufferWithSize;
 using chip::Transport::PeerAddress;
+using chip::app::AttributePathParams;
+using chip::app::EventPathParams;
+using esp_matter::controller::read_command;
 
 namespace esp_matter {
 namespace controller {
@@ -61,6 +67,45 @@ namespace http_server {
 static const char *TAG = "controller_httpserver";
 static httpd_handle_t s_server = NULL;
 static bool s_cors_enabled = false;
+
+// Structure to store read attribute results
+struct ReadAttributeResult {
+    SemaphoreHandle_t semaphore;
+    cJSON *attribute_data;
+    bool success;
+    char error_message[256];
+    uint32_t expected_responses;
+    uint32_t received_responses;
+    
+    ReadAttributeResult(uint32_t expected_count) {
+        semaphore = xSemaphoreCreateBinary();
+        attribute_data = cJSON_CreateArray();
+        success = false;
+        error_message[0] = '\0';
+        expected_responses = expected_count;
+        received_responses = 0;
+    }
+    
+    ~ReadAttributeResult() {
+        if (semaphore) {
+            vSemaphoreDelete(semaphore);
+        }
+        if (attribute_data) {
+            cJSON_Delete(attribute_data);
+        }
+    }
+};
+
+// Global map to store read results (simple implementation)
+static std::map<uint64_t, ReadAttributeResult*> s_read_results;
+static SemaphoreHandle_t s_read_results_mutex = nullptr;
+
+// Initialize read results mutex
+static void init_read_results_mutex() {
+    if (!s_read_results_mutex) {
+        s_read_results_mutex = xSemaphoreCreateMutex();
+    }
+}
 
 // Simple lock helper - returns true if lock acquired successfully
 static bool acquire_matter_lock() {
@@ -76,6 +121,145 @@ static void release_matter_lock() {
 static void safe_log(const char* level, const char* message) {
     // Use printf instead of ESP_LOG to avoid potential lock conflicts
     printf("[%s] %s: %s\n", level, TAG, message);
+}
+
+// Callback function for attribute data
+static void http_attribute_data_callback(uint64_t node_id, const chip::app::ConcreteDataAttributePath &path, chip::TLV::TLVReader *data) {
+    if (!s_read_results_mutex) return;
+    
+    if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        auto it = s_read_results.find(node_id);
+        if (it != s_read_results.end()) {
+            ReadAttributeResult *result = it->second;
+            
+            // Create JSON object for this attribute
+            cJSON *attr_obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(attr_obj, "node_id", node_id);
+            cJSON_AddNumberToObject(attr_obj, "endpoint_id", path.mEndpointId);
+            cJSON_AddNumberToObject(attr_obj, "cluster_id", path.mClusterId);
+            cJSON_AddNumberToObject(attr_obj, "attribute_id", path.mAttributeId);
+            
+            // Try to decode the TLV data
+            if (data != nullptr) {
+                chip::TLV::TLVReader reader;
+                reader.Init(*data);
+                
+                // Read the TLV data type and value
+                chip::TLV::TLVType tlv_type = reader.GetType();
+                switch (tlv_type) {
+                    case chip::TLV::kTLVType_Boolean: {
+                        bool value;
+                        if (reader.Get(value) == CHIP_NO_ERROR) {
+                            cJSON_AddBoolToObject(attr_obj, "value", value);
+                            cJSON_AddStringToObject(attr_obj, "type", "boolean");
+                        }
+                        break;
+                    }
+                    case chip::TLV::kTLVType_UnsignedInteger: {
+                        uint64_t value;
+                        if (reader.Get(value) == CHIP_NO_ERROR) {
+                            cJSON_AddNumberToObject(attr_obj, "value", value);
+                            cJSON_AddStringToObject(attr_obj, "type", "uint");
+                        }
+                        break;
+                    }
+                    case chip::TLV::kTLVType_SignedInteger: {
+                        int64_t value;
+                        if (reader.Get(value) == CHIP_NO_ERROR) {
+                            cJSON_AddNumberToObject(attr_obj, "value", value);
+                            cJSON_AddStringToObject(attr_obj, "type", "int");
+                        }
+                        break;
+                    }
+                    case chip::TLV::kTLVType_UTF8String: {
+                        chip::CharSpan value;
+                        if (reader.Get(value) == CHIP_NO_ERROR) {
+                            char str_buf[256];
+                            size_t copy_len = std::min(value.size(), sizeof(str_buf) - 1);
+                            memcpy(str_buf, value.data(), copy_len);
+                            str_buf[copy_len] = '\0';
+                            cJSON_AddStringToObject(attr_obj, "value", str_buf);
+                            cJSON_AddStringToObject(attr_obj, "type", "string");
+                        }
+                        break;
+                    }
+                    case chip::TLV::kTLVType_FloatingPointNumber: {
+                        double value;
+                        if (reader.Get(value) == CHIP_NO_ERROR) {
+                            cJSON_AddNumberToObject(attr_obj, "value", value);
+                            cJSON_AddStringToObject(attr_obj, "type", "float");
+                        }
+                        break;
+                    }
+                    default:
+                        // For other types, just indicate raw data
+                        cJSON_AddStringToObject(attr_obj, "value", "raw_data");
+                        cJSON_AddStringToObject(attr_obj, "type", "raw");
+                        break;
+                }
+            } else {
+                cJSON_AddNullToObject(attr_obj, "value");
+                cJSON_AddStringToObject(attr_obj, "type", "null");
+            }
+            
+            // Add to results array
+            cJSON_AddItemToArray(result->attribute_data, attr_obj);
+            result->received_responses++;
+            result->success = true;
+        }
+        xSemaphoreGive(s_read_results_mutex);
+    }
+}
+
+// Callback function for read done
+static void http_read_done_callback(uint64_t node_id, 
+                                   const chip::Platform::ScopedMemoryBufferWithSize<chip::app::AttributePathParams> &attr_paths,
+                                   const chip::Platform::ScopedMemoryBufferWithSize<chip::app::EventPathParams> &event_paths) {
+    if (!s_read_results_mutex) return;
+    
+    if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        auto it = s_read_results.find(node_id);
+        if (it != s_read_results.end()) {
+            ReadAttributeResult *result = it->second;
+            // Signal completion
+            xSemaphoreGive(result->semaphore);
+        }
+        xSemaphoreGive(s_read_results_mutex);
+    }
+}
+
+// Custom read attribute function with callbacks
+static esp_err_t send_read_attr_command_with_callbacks(uint64_t node_id, 
+                                                       ScopedMemoryBufferWithSize<uint16_t> &endpoint_ids,
+                                                       ScopedMemoryBufferWithSize<uint32_t> &cluster_ids,
+                                                       ScopedMemoryBufferWithSize<uint32_t> &attribute_ids) {
+    if (endpoint_ids.AllocatedSize() != cluster_ids.AllocatedSize() ||
+        endpoint_ids.AllocatedSize() != attribute_ids.AllocatedSize()) {
+        ESP_LOGE(TAG, "Array length mismatch");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ScopedMemoryBufferWithSize<AttributePathParams> attr_paths;
+    ScopedMemoryBufferWithSize<EventPathParams> event_paths;
+    attr_paths.Alloc(endpoint_ids.AllocatedSize());
+    if (!attr_paths.Get()) {
+        ESP_LOGE(TAG, "Failed to alloc memory for attribute paths");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    for (size_t i = 0; i < attr_paths.AllocatedSize(); ++i) {
+        attr_paths[i] = AttributePathParams(endpoint_ids[i], cluster_ids[i], attribute_ids[i]);
+    }
+    
+    // Create read command with callbacks
+    read_command *cmd = chip::Platform::New<read_command>(node_id, std::move(attr_paths), std::move(event_paths),
+                                                          http_attribute_data_callback, http_read_done_callback, nullptr);
+    if (!cmd) {
+        ESP_LOGE(TAG, "Failed to alloc memory for read_command");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    return cmd->send_command();
 }
 
 // Enhanced error handling with stack trace protection
@@ -766,40 +950,83 @@ esp_err_t read_attribute_handler(httpd_req_t *req) {
         return safe_send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
     }
     
-    // Minimize time spent in lock by preparing everything beforehand
-    bool lock_acquired = false;
+    // Initialize the read results mutex if not already done
+    init_read_results_mutex();
+    
+    // Create result structure to capture attribute data
+    uint32_t expected_count = ep_ids.AllocatedSize();
+    ReadAttributeResult *read_result = new ReadAttributeResult(expected_count);
+    
+    // Store the result in the global map
+    if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        s_read_results[nodeId] = read_result;
+        xSemaphoreGive(s_read_results_mutex);
+    } else {
+        delete read_result;
+        cJSON_Delete(json);
+        return safe_send_error_response(req, 500, "Internal server error - mutex timeout");
+    }
     
     // Try to acquire lock with shorter timeout
     if (!acquire_matter_lock()) {
+        // Clean up
+        if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            s_read_results.erase(nodeId);
+            xSemaphoreGive(s_read_results_mutex);
+        }
+        delete read_result;
         cJSON_Delete(json);
         return safe_send_error_response(req, 503, "Matter stack busy - please retry");
     }
     
-    lock_acquired = true;
-    
-    // Execute command as quickly as possible while locked
-    result = controller::send_read_attr_command(nodeId, ep_ids, cl_ids, attr_ids);
+    // Execute command with callbacks
+    result = send_read_attr_command_with_callbacks(nodeId, ep_ids, cl_ids, attr_ids);
     
     // Release lock immediately after command
     release_matter_lock();
-    lock_acquired = false;
     
-    // Create response after releasing lock
     cJSON *response = cJSON_CreateObject();
     if (!response) {
+        // Clean up
+        if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            s_read_results.erase(nodeId);
+            xSemaphoreGive(s_read_results_mutex);
+        }
+        delete read_result;
         cJSON_Delete(json);
         return safe_send_error_response(req, 500, "Failed to create response");
     }
     
     if (result == ESP_OK) {
-        cJSON_AddStringToObject(response, "status", "success");
-        cJSON_AddStringToObject(response, "message", "Read attribute command sent successfully");
+        // Wait for the read operation to complete (with timeout)
+        if (xSemaphoreTake(read_result->semaphore, pdMS_TO_TICKS(10000)) == pdTRUE) {
+            // Read operation completed successfully
+            cJSON_AddStringToObject(response, "status", "success");
+            cJSON_AddStringToObject(response, "message", "Read attribute completed successfully");
+            
+            // Add the actual attribute data to the response
+            cJSON *data_copy = cJSON_Duplicate(read_result->attribute_data, true);
+            cJSON_AddItemToObject(response, "attributes", data_copy);
+            
+            ret = send_json_response(req, response, 200);
+        } else {
+            // Timeout waiting for response
+            cJSON_AddStringToObject(response, "status", "timeout");
+            cJSON_AddStringToObject(response, "message", "Timeout waiting for attribute data");
+            ret = send_json_response(req, response, 408);
+        }
     } else {
         cJSON_AddStringToObject(response, "status", "error");
         cJSON_AddStringToObject(response, "message", "Failed to send read attribute command");
+        ret = send_json_response(req, response, 500);
     }
     
-    ret = send_json_response(req, response, result == ESP_OK ? 200 : 500);
+    // Clean up
+    if (xSemaphoreTake(s_read_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        s_read_results.erase(nodeId);
+        xSemaphoreGive(s_read_results_mutex);
+    }
+    delete read_result;
     cJSON_Delete(json);
     cJSON_Delete(response);
     return ret;
@@ -1616,6 +1843,8 @@ httpd_handle_t get_http_server_handle(void) {
 bool is_http_server_running(void) {
     return s_server != NULL;
 }
+
+
 
 } // namespace http_server
 } // namespace controller
