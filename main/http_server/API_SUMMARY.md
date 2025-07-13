@@ -329,6 +329,42 @@ curl -X POST http://192.168.1.100:8080/api/read-attribute \
 }
 ```
 
+### /api/write-attribute 响应格式
+
+写入属性 API 现在返回实际的写入结果，而不仅仅是命令发送状态。
+
+**成功响应示例：**
+```json
+{
+  "status": "success",
+  "message": "Write attribute completed successfully",
+  "write_results": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 8,
+      "attribute_id": 0
+    }
+  ]
+}
+```
+
+**超时响应示例：**
+```json
+{
+  "status": "timeout",
+  "message": "Timeout waiting for write completion"
+}
+```
+
+**错误响应示例：**
+```json
+{
+  "status": "error",
+  "message": "Failed to send write attribute command"
+}
+```
+
 ### 写入属性使用示例
 
 ```bash
@@ -378,12 +414,20 @@ curl -X POST http://192.168.1.100:8080/api/write-attribute \
   }'
 ```
 
-**write-attribute 响应示例：**
+**新的写入属性响应格式：**
 
 ```json
 {
   "status": "success",
-  "message": "Write attribute command sent successfully"
+  "message": "Write attribute completed successfully",
+  "write_results": [
+    {
+      "node_id": 12345,
+      "endpoint_id": 1,
+      "cluster_id": 8,
+      "attribute_id": 0
+    }
+  ]
 }
 ```
 

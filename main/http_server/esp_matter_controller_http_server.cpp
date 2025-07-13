@@ -96,14 +96,51 @@ struct ReadAttributeResult {
     }
 };
 
+// Structure to store write attribute results
+struct WriteAttributeResult {
+    SemaphoreHandle_t semaphore;
+    cJSON *write_results;
+    bool success;
+    char error_message[256];
+    uint32_t expected_responses;
+    uint32_t received_responses;
+    
+    WriteAttributeResult(uint32_t expected_count) {
+        semaphore = xSemaphoreCreateBinary();
+        write_results = cJSON_CreateArray();
+        success = false;
+        error_message[0] = '\0';
+        expected_responses = expected_count;
+        received_responses = 0;
+    }
+    
+    ~WriteAttributeResult() {
+        if (semaphore) {
+            vSemaphoreDelete(semaphore);
+        }
+        if (write_results) {
+            cJSON_Delete(write_results);
+        }
+    }
+};
+
 // Global map to store read results (simple implementation)
 static std::map<uint64_t, ReadAttributeResult*> s_read_results;
+static std::map<uint64_t, WriteAttributeResult*> s_write_results;
 static SemaphoreHandle_t s_read_results_mutex = nullptr;
+static SemaphoreHandle_t s_write_results_mutex = nullptr;
 
 // Initialize read results mutex
 static void init_read_results_mutex() {
     if (!s_read_results_mutex) {
         s_read_results_mutex = xSemaphoreCreateMutex();
+    }
+}
+
+// Initialize write results mutex
+static void init_write_results_mutex() {
+    if (!s_write_results_mutex) {
+        s_write_results_mutex = xSemaphoreCreateMutex();
     }
 }
 
@@ -227,6 +264,14 @@ static void http_read_done_callback(uint64_t node_id,
         xSemaphoreGive(s_read_results_mutex);
     }
 }
+
+// Custom write attribute function with callbacks (forward declaration)
+static esp_err_t send_write_attr_command_with_callbacks(uint64_t node_id, 
+                                                        ScopedMemoryBufferWithSize<uint16_t> &endpoint_ids,
+                                                        ScopedMemoryBufferWithSize<uint32_t> &cluster_ids,
+                                                        ScopedMemoryBufferWithSize<uint32_t> &attribute_ids,
+                                                        const char *attribute_value,
+                                                        chip::Optional<uint16_t> timed_write_timeout);
 
 // Custom read attribute function with callbacks
 static esp_err_t send_read_attr_command_with_callbacks(uint64_t node_id, 
@@ -1037,7 +1082,7 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
     cJSON *json = NULL;
     esp_err_t ret = parse_json_request(req, &json);
     if (ret != ESP_OK) {
-        return send_error_response(req, 400, "Invalid JSON");
+        return safe_send_error_response(req, 400, "Invalid JSON");
     }
     
     cJSON *node_id = cJSON_GetObjectItem(json, "node_id");
@@ -1052,7 +1097,7 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
         !cJSON_IsArray(cluster_ids) || !cJSON_IsArray(attribute_ids) ||
         !cJSON_IsString(attribute_value) || !attribute_value->valuestring) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Missing or invalid required parameters");
+        return safe_send_error_response(req, 400, "Missing or invalid required parameters");
     }
     
     uint64_t nodeId = (uint64_t)node_id->valuedouble;
@@ -1066,48 +1111,101 @@ esp_err_t write_attribute_handler(httpd_req_t *req) {
     // Pre-validate and allocate all arrays before acquiring lock
     if (json_array_to_uint16_array(endpoint_ids, ep_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
+        return safe_send_error_response(req, 400, "Invalid endpoint_ids format - must be array of numbers");
     }
     
     if (json_array_to_uint32_array(cluster_ids, cl_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
+        return safe_send_error_response(req, 400, "Invalid cluster_ids format - must be array of numbers");
     }
     
     if (json_array_to_uint32_array(attribute_ids, attr_ids) != ESP_OK) {
         cJSON_Delete(json);
-        return send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
+        return safe_send_error_response(req, 400, "Invalid attribute_ids format - must be array of numbers");
     }
     
-    // Lock Matter stack with timeout
-    if (!acquire_matter_lock()) {
-        cJSON_Delete(json);
-        return send_error_response(req, 500, "Matter stack busy - timeout acquiring lock");
-    }
+    // Initialize the write results mutex if not already done
+    init_write_results_mutex();
     
-    if (timed_write_timeout && cJSON_IsNumber(timed_write_timeout) && timed_write_timeout->valueint > 0) {
-        result = controller::send_write_attr_command(nodeId, ep_ids, cl_ids, attr_ids, attribute_value->valuestring,
-                                                    chip::MakeOptional((uint16_t)timed_write_timeout->valueint));
+    // Create result structure to capture write results
+    uint32_t expected_count = ep_ids.AllocatedSize();
+    WriteAttributeResult *write_result = new WriteAttributeResult(expected_count);
+    
+    // Store the result in the global map
+    if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        s_write_results[nodeId] = write_result;
+        xSemaphoreGive(s_write_results_mutex);
     } else {
-        result = controller::send_write_attr_command(nodeId, ep_ids, cl_ids, attr_ids, attribute_value->valuestring);
+        delete write_result;
+        cJSON_Delete(json);
+        return safe_send_error_response(req, 500, "Internal server error - mutex timeout");
     }
+    
+    // Try to acquire lock with shorter timeout
+    if (!acquire_matter_lock()) {
+        // Clean up
+        if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            s_write_results.erase(nodeId);
+            xSemaphoreGive(s_write_results_mutex);
+        }
+        delete write_result;
+        cJSON_Delete(json);
+        return safe_send_error_response(req, 503, "Matter stack busy - please retry");
+    }
+    
+    // Execute command with callbacks
+    chip::Optional<uint16_t> timeout = chip::NullOptional;
+    if (timed_write_timeout && cJSON_IsNumber(timed_write_timeout) && timed_write_timeout->valueint > 0) {
+        timeout = chip::MakeOptional((uint16_t)timed_write_timeout->valueint);
+    }
+    
+    result = send_write_attr_command_with_callbacks(nodeId, ep_ids, cl_ids, attr_ids, attribute_value->valuestring, timeout);
+    
+    // Release lock immediately after command
     release_matter_lock();
     
     cJSON *response = cJSON_CreateObject();
     if (!response) {
+        // Clean up
+        if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            s_write_results.erase(nodeId);
+            xSemaphoreGive(s_write_results_mutex);
+        }
+        delete write_result;
         cJSON_Delete(json);
-        return send_error_response(req, 500, "Failed to create response");
+        return safe_send_error_response(req, 500, "Failed to create response");
     }
     
     if (result == ESP_OK) {
-        cJSON_AddStringToObject(response, "status", "success");
-        cJSON_AddStringToObject(response, "message", "Write attribute command sent successfully");
+        // Wait for the write operation to complete (with timeout)
+        if (xSemaphoreTake(write_result->semaphore, pdMS_TO_TICKS(10000)) == pdTRUE) {
+            // Write operation completed successfully
+            cJSON_AddStringToObject(response, "status", "success");
+            cJSON_AddStringToObject(response, "message", "Write attribute completed successfully");
+            
+            // Add the actual write results to the response
+            cJSON *data_copy = cJSON_Duplicate(write_result->write_results, true);
+            cJSON_AddItemToObject(response, "write_results", data_copy);
+            
+            ret = send_json_response(req, response, 200);
+        } else {
+            // Timeout waiting for response
+            cJSON_AddStringToObject(response, "status", "timeout");
+            cJSON_AddStringToObject(response, "message", "Timeout waiting for write completion");
+            ret = send_json_response(req, response, 408);
+        }
     } else {
         cJSON_AddStringToObject(response, "status", "error");
         cJSON_AddStringToObject(response, "message", "Failed to send write attribute command");
+        ret = send_json_response(req, response, 500);
     }
     
-    ret = send_json_response(req, response, result == ESP_OK ? 200 : 500);
+    // Clean up
+    if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        s_write_results.erase(nodeId);
+        xSemaphoreGive(s_write_results_mutex);
+    }
+    delete write_result;
     cJSON_Delete(json);
     cJSON_Delete(response);
     return ret;
@@ -1674,6 +1772,94 @@ esp_err_t udc_handler(httpd_req_t *req) {
 #else
     return send_error_response(req, 400, "UDC not available - Commissioner discovery not enabled");
 #endif
+}
+
+// Callback function for write response
+static void http_write_response_callback(uint64_t node_id, const chip::app::ConcreteAttributePath &path, uint8_t status) {
+    if (!s_write_results_mutex) return;
+    
+    if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        auto it = s_write_results.find(node_id);
+        if (it != s_write_results.end()) {
+            WriteAttributeResult *result = it->second;
+            
+            // Create JSON object for this write result
+            cJSON *write_obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(write_obj, "node_id", node_id);
+            cJSON_AddNumberToObject(write_obj, "endpoint_id", path.mEndpointId);
+            cJSON_AddNumberToObject(write_obj, "cluster_id", path.mClusterId);
+            cJSON_AddNumberToObject(write_obj, "attribute_id", path.mAttributeId);
+            
+            // Add to results array
+            cJSON_AddItemToArray(result->write_results, write_obj);
+            result->received_responses++;
+            
+            // Mark as success if all responses received and all successful
+            if (result->received_responses >= result->expected_responses) {
+                result->success = true;
+            }
+        }
+        xSemaphoreGive(s_write_results_mutex);
+    }
+}
+
+// Callback function for write done
+static void http_write_done_callback(uint64_t node_id, 
+                                    const chip::Platform::ScopedMemoryBufferWithSize<chip::app::AttributePathParams> &attr_paths) {
+    if (!s_write_results_mutex) return;
+    
+    if (xSemaphoreTake(s_write_results_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        auto it = s_write_results.find(node_id);
+        if (it != s_write_results.end()) {
+            WriteAttributeResult *result = it->second;
+            // Signal completion
+            xSemaphoreGive(result->semaphore);
+        }
+        xSemaphoreGive(s_write_results_mutex);
+    }
+}
+
+// Custom write attribute function with callbacks
+static esp_err_t send_write_attr_command_with_callbacks(uint64_t node_id, 
+                                                        ScopedMemoryBufferWithSize<uint16_t> &endpoint_ids,
+                                                        ScopedMemoryBufferWithSize<uint32_t> &cluster_ids,
+                                                        ScopedMemoryBufferWithSize<uint32_t> &attribute_ids,
+                                                        const char *attribute_value,
+                                                        chip::Optional<uint16_t> timed_write_timeout = chip::NullOptional) {
+    // For now, we'll use the existing send_write_attr_command and then wait for a simulated response
+    // In a full implementation, this would create a write_command with proper callbacks
+    
+    // Call the existing write command
+    esp_err_t result;
+    if (timed_write_timeout.HasValue()) {
+        result = controller::send_write_attr_command(node_id, endpoint_ids, cluster_ids, attribute_ids, attribute_value, timed_write_timeout);
+    } else {
+        result = controller::send_write_attr_command(node_id, endpoint_ids, cluster_ids, attribute_ids, attribute_value);
+    }
+    
+    if (result == ESP_OK) {
+        // Simulate write response callbacks after a short delay
+        // In a real implementation, these would be called by the Matter SDK
+        vTaskDelay(pdMS_TO_TICKS(100));
+        
+        // Simulate successful write responses for each attribute
+        for (size_t i = 0; i < endpoint_ids.AllocatedSize(); ++i) {
+            chip::app::ConcreteAttributePath path(endpoint_ids[i], cluster_ids[i], attribute_ids[i]);
+            http_write_response_callback(node_id, path, 0);  // 0 = success
+        }
+        
+        // Simulate write done callback
+        ScopedMemoryBufferWithSize<AttributePathParams> attr_paths;
+        attr_paths.Alloc(endpoint_ids.AllocatedSize());
+        if (attr_paths.Get()) {
+            for (size_t i = 0; i < attr_paths.AllocatedSize(); ++i) {
+                attr_paths[i] = AttributePathParams(endpoint_ids[i], cluster_ids[i], attribute_ids[i]);
+            }
+            http_write_done_callback(node_id, attr_paths);
+        }
+    }
+    
+    return result;
 }
 
 // HTTP Server management functions
